@@ -1,21 +1,172 @@
 import pygame
 import ctypes
 from os import environ
+from time import time
+from random import randint
 
+# system stuff
 environ['SDL_VIDEO_CENTERED'] = '1'
 pygame.init()
 
-
+# screen
 user32 = ctypes.windll.user32
 SYS_SIZE = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
 screensize = width, height = SYS_SIZE
 screen = pygame.display.set_mode(screensize, pygame.NOFRAME)
 
+# global variables
+all_sprites = pygame.sprite.Group()
+all_resizable = set()
 
+
+def percentage(limit, percent):
+    return int(limit / 100 * percent)
+
+
+def exit_game():
+    global running
+    running = False
+
+
+class Button(pygame.sprite.Sprite):
+    def __init__(self, group, x=0, y=0, w=0, h=0, color=(255, 255, 255), outline=0, background=(0, 0, 0),
+                 limit=60, speed=0.5, text=""):
+        super().__init__(group)
+        self.size = (w, h)
+        self.outline = outline
+        self.color = color
+        self.add = 0
+        self.speed = speed
+        self.start = time()
+        self.limit = limit
+        self.now_background = background
+        self.background = background
+        self.image = pygame.Surface((w, h), pygame.SRCALPHA, 32)
+        pygame.draw.rect(self.image, color, (0, 0, w, h), outline)
+        self.text = text
+        self.font = self.text_surface = self.text_rect = self.rect = None
+        self.change_cords(x, y, w, h)
+
+    def change_cords(self, x, y, w, h):
+        self.size = (w, h)
+        self.font = pygame.font.SysFont('Comic Sans MS', percentage(h, 70))
+        self.text_surface = self.font.render(self.text, False, (255, 255, 255))
+        self.text_rect = self.text_surface.get_rect()
+        self.text_rect.center = (w // 2, h // 2)
+        self.image = pygame.Surface((w, h), pygame.SRCALPHA, 32)
+        pygame.draw.rect(self.image,
+                         list(map(lambda a: int(min(a + self.add, 255)), self.background)), (0, 0, *self.size), 0)
+        pygame.draw.rect(self.image, self.color, (0, 0, w, h), self.outline)
+        self.image.blit(self.text_surface, self.text_rect)
+        self.rect = self.image.get_rect().move(x, y)
+
+    def update(self, *args):
+        mouse_pos = pygame.mouse.get_pos()
+        if self.rect.collidepoint(mouse_pos) and self.add < self.limit:
+            self.add += self.limit * (time() - self.start) / self.speed
+        elif not self.rect.collidepoint(mouse_pos) and self.add > 0:
+            self.add -= self.limit * (time() - self.start) / self.speed
+        else:
+            self.start = time()
+            return
+        self.add = min(self.add, self.limit)
+        self.add = max(self.add, 0)
+        pygame.draw.rect(self.image,
+                         list(map(lambda a: int(min(a + self.add, 255)), self.background)), (0, 0, *self.size), 0)
+        pygame.draw.rect(self.image, self.color, (0, 0, *self.size), self.outline)
+        self.image.blit(self.text_surface, self.text_rect)
+        self.start = time()
+
+
+class Menu(pygame.sprite.Sprite):
+    class Circle(pygame.sprite.Sprite):
+        def __init__(self, group, color=(255, 255, 255), wait_time=0.01):
+            super().__init__(group)
+            self.color = color
+            self.wait_time = wait_time
+            self.r = self.x = self.y = 0
+            self.image = self.rect = None
+            self.start = time()
+            self.resize()
+
+        def resize(self):
+            self.r = percentage(height, 1)
+            self.x = randint(self.r, width - self.r)
+            self.y = randint(self.r, height - self.r)
+            self.image = pygame.Surface((self.r * 2, self.r * 2), pygame.SRCALPHA, 32)
+            pygame.draw.circle(self.image, self.color, (self.r, self.r), self.r)
+            self.rect = self.image.get_rect().move(self.x, self.y)
+
+        def update(self, *args):
+            if time() - self.start > self.wait_time:
+                vx = randint(-1, 1)
+                vy = randint(-1, 1)
+                self.rect = self.rect.move(vx, vy)
+                self.start = time()
+
+    def __init__(self, group):
+        super().__init__(group)
+        self.group = group
+        self.background = (255, 100, 100)
+        self.image = self.rect = None
+        self.circles = pygame.sprite.Group()
+        for _ in range(percentage(height, 9)):
+            self.Circle(self.circles, color=(255, 255, 255))
+        self.buttons = pygame.sprite.Group()
+        self.texts = {
+            "Play": list,
+            "Levels": list,
+            "Settings": list,
+            "Exit": exit_game,
+        }
+        self.font = self.text_surface = self.text_rect = None
+        for text in self.texts:
+            Button(self.buttons, color=(255, 255, 255), outline=3, background=self.background,
+                   limit=60, speed=0.5, text=text)
+        self.resize()
+        all_resizable.add(self)
+        self.group.add(self.circles)
+        self.group.add(self.buttons)
+
+    def resize(self):
+        screen.fill(self.background)
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        self.font = pygame.font.SysFont('Comic Sans MS', percentage(height, 24))
+        self.text_surface = self.font.render("UwU~~", False, (255, 255, 255))
+        self.text_rect = self.text_surface.get_rect()
+        self.text_rect.center = (percentage(width, 50), percentage(height, 19))
+        self.image.blit(self.text_surface, self.text_rect)
+        n = len(self.texts)
+        free_height = percentage(height, 38)
+        free_width = percentage(width, 50)
+        free_bottom = percentage(height, 7)
+        height_between = percentage(height, 3)
+        button_width = width - free_width
+        button_height = (height - free_height - free_bottom - height_between * (n - 1)) // n
+        for i, button in enumerate(self.buttons):
+            button.change_cords(free_width // 2,
+                                free_height + i * button_height + i * height_between,
+                                button_width,
+                                button_height)
+        for circle in self.circles:
+            circle.resize()
+
+    def update(self, *args):
+        if args and args[0].type == pygame.MOUSEBUTTONDOWN:
+            for button in self.buttons:
+                if button.rect.collidepoint(args[0].pos):
+                    self.texts[button.text]()
+        if not args:
+            self.circles.update()
+            self.buttons.update()
+
+
+menu = Menu(all_sprites)
 full_screen = True
 running = True
 while running:
-    screen.fill((0, 0, 0))
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -24,7 +175,7 @@ while running:
                 running = False
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_F11 and full_screen:
-                pygame.display.set_mode((int(width / 100 * 60), int(height / 100 * 60)), pygame.RESIZABLE)
+                pygame.display.set_mode((percentage(width, 70), percentage(height, 70)), pygame.RESIZABLE)
                 width = screen.get_width()
                 height = screen.get_height()
                 full_screen = False
@@ -32,12 +183,19 @@ while running:
                 pygame.display.set_mode(SYS_SIZE, pygame.NOFRAME)
                 width, height = SYS_SIZE
                 full_screen = True
+                for elem in all_resizable:
+                    elem.resize()
         if event.type == pygame.VIDEORESIZE and not full_screen:
             pygame.display.set_mode(event.size, pygame.RESIZABLE)
             width = screen.get_width()
             height = screen.get_height()
-    pygame.draw.rect(screen, (255, 255, 255), (width - 200, height - 200, 100, 100))
-    pygame.draw.rect(screen, (255, 255, 255), (100, 100, 100, 100))
+            for elem in all_resizable:
+                elem.resize()
+        all_sprites.update(event)
+    all_sprites.update()
+    all_sprites.draw(screen)
     pygame.display.flip()
 
+
+print("Bye =^=\tLove, Pinka")
 pygame.quit()
