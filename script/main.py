@@ -37,6 +37,17 @@ def exit_game():
     running = False
 
 
+def load_image(name, color_key=None):
+    image = pygame.image.load(name)
+    if color_key is not None:
+        if color_key == -1:
+            color_key = image.get_at((0, 0))
+        image.set_colorkey(color_key)
+    else:
+        image = image.convert_alpha()
+    return image
+
+
 class Button(pygame.sprite.Sprite):
     def __init__(self, group, x=0, y=0, w=0, h=0, color=(255, 255, 255), outline=3, background=(0, 0, 0),
                  limit=60, speed=0.5, text=""):
@@ -252,7 +263,7 @@ class Levels(pygame.sprite.Sprite):
             if event.button == 1:
                 for button in self.buttons:
                     if button.rect.collidepoint(args[0].pos):
-                        print(button.text)
+                        Game(button.text)
             # SAVED IN REASON OF BEING TO MANY LEVELS
             # if event.button == 4:
             #     self.rect = self.rect.move(0, -percentage(height, 2))
@@ -269,31 +280,123 @@ class Levels(pygame.sprite.Sprite):
                 Menu()
 
 
-class Game(pygame.sprite.Sprite):
-    def __init__(self):
-        global all_page_sprites, all_page_resizable
-        self.group = pygame.sprite.Group()
-        self.resizable = set()
-        super().__init__(self.group)
-        self.image = self.rect = None
-        self.camera = Camera()
-        self.buttons = pygame.sprite.Group()
-        self.resize()
-        all_page_sprites = self.group
-        all_page_resizable = self.resizable
+class Block(pygame.sprite.Sprite):
+    def __init__(self, group, image, x, y):
+        super().__init__(group)
+        self.image = load_image(image)
+        self.rect = self.image.get_rect().move(x, y)
+        self.mask = pygame.mask.from_surface(self.image)
 
-    def resize(self):
-        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
-        self.image.fill(COLORS["background"])
-        self.rect = self.image.get_rect()
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self, group, collide_group, image, x, y):
+        super().__init__(group)
+        self.collide_group = collide_group
+        self.image = load_image(image)
+        self.mask = pygame.mask.from_surface(self.image)
+        self.rect = self.image.get_rect().move(x, y)
+        self.jump_power = 7
+        self.gravity = 0.30
+        self.y_vel = 0
+        self.x_vel = 0
+        self.on_ground = False
+
+    def move(self, vx, vy):
+        self.rect.x += vx
+        self.rect.y += vy
+        for block in self.collide_group:
+            if pygame.sprite.collide_mask(self, block):  # если есть пересечение платформы с игроком
+                if vx > 0:  # если движется вправо
+                    self.rect.right = block.rect.left  # то не движется вправо
+                if vx < 0:  # если движется влево
+                    self.rect.left = block.rect.right  # то не движется влево
+                if vy > 0:  # если падает вниз
+                    self.rect.bottom = block.rect.top  # то не падает вниз
+                    self.on_ground = True  # и становится на что-то твердое
+                    self.y_vel = 0  # и энергия падения пропадает
+                if vy < 0:  # если движется вверх
+                    self.rect.top = block.rect.bottom  # то не движется вверх
+                    self.y_vel = 0  # и энергия прыжка пропадает
+
+    def jump(self):
+        if self.on_ground:
+            self.y_vel = -self.jump_power
+            self.on_ground = False
 
     def update(self, *args):
         if not args:
+            self.y_vel += self.gravity
+            self.move(0, self.y_vel)
+            return
+
+
+class Game(pygame.sprite.Sprite):
+    TXT_TO_BLOCK = {
+        "#": join(IMAGES, "solid.png"),
+        "@": join(IMAGES, "player.png"),
+        " ": join(IMAGES, "*.png")
+    }
+
+    def __init__(self, level):
+        global all_page_sprites, all_page_resizable
+        self.level = level
+        self.group = pygame.sprite.Group()
+        self.resizable = set()
+        self.background = COLORS["background"]
+        super().__init__(self.group)
+        self.image = self.rect = None
+        self.camera = Camera()
+        self.blocks = pygame.sprite.Group()
+        self.player = None
+        self.load_level()
+        self.resize()
+        self.group.add(self.blocks)
+        all_page_sprites = self.group
+        all_page_resizable = self.resizable
+
+    def load_level(self):
+        size = 30
+        with open(join(LEVELS, self.level + ".txt"), "r", encoding="UTF-8") as level:
+            level_data = list(map(str.strip, level.readlines()))
+        for i, line in enumerate(level_data):
+            for j, elem in enumerate(line):
+                if elem == "@":
+                    self.player = Player(self.group, self.blocks, self.TXT_TO_BLOCK[elem], j * size, i * size)
+                elif elem != " ":
+                    Block(self.blocks, self.TXT_TO_BLOCK[elem], j * size, i * size)
+
+    def resize(self):
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        self.camera.update(self.player)
+        for elem in self.blocks:
+            self.camera.apply(elem)
+        self.camera.apply(self.player)
+
+    def update(self, *args):
+        if not args:
+            pressed = pygame.key.get_pressed()
+            if pressed[pygame.K_LEFT]:
+                self.player.move(-2, 0)
+            if pressed[pygame.K_RIGHT]:
+                self.player.move(2, 0)
+            self.camera.update(self.player)
+            for elem in self.blocks:
+                self.camera.apply(elem)
+            self.camera.apply(self.player)
             return
         event = args[0]
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                Levels()
+            if event.key == pygame.K_SPACE:
+                self.player.jump()
 
 
-Menu()
+Levels()
+fps = 60
+clock = pygame.time.Clock()
 full_screen = True
 running = True
 while running:
@@ -322,6 +425,7 @@ while running:
     all_page_sprites.update()
     all_page_sprites.draw(screen)
     pygame.display.flip()
+    clock.tick(fps)
 
 
 print("Bye =^=\tLove, Pinka")
