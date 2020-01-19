@@ -2,7 +2,7 @@ import pygame
 import ctypes
 from os.path import split, join
 from os import environ, getcwd, listdir
-from time import time, sleep
+from time import time
 from random import randint
 
 # system stuff
@@ -18,11 +18,14 @@ screen = pygame.display.set_mode(screensize, pygame.NOFRAME)
 # constants
 LEVELS = join(split(getcwd())[0], "levels")
 IMAGES = join(split(getcwd())[0], "images")
+MUSIC = join(split(getcwd())[0], "music")
+USER_LEVELS = join(split(getcwd())[0], "user_levels")
 COLORS = {
     # "background": (255, 100, 100),
     "background": (250, 100, 100),
     "outline": (255, 255, 255)
 }
+BLOCK_SIZE = (30, 30)  # размер всех изображение
 
 # global variables
 all_page_sprites = pygame.sprite.Group()
@@ -47,6 +50,63 @@ def load_image(name, color_key=None):
     else:
         image = image.convert_alpha()
     return image
+
+
+class MusicPlayer:
+    def __init__(self, mute=False, playing=True, now_ind=0, volume=0.5):
+        self.volume = volume
+        self.mute = mute
+        self.playing = playing
+        self.now_ind = now_ind
+        self.songs = listdir(MUSIC)
+
+    def check_and_start_next(self, song=""):
+        if not pygame.mixer.music.get_busy() or not self.playing:
+            self.playing = True
+            if not song:
+                self.now_ind = (self.now_ind + 1) % len(self.songs)
+                pygame.mixer.music.load(join(MUSIC, self.songs[self.now_ind]))
+            else:
+                pygame.mixer.music.load(join(MUSIC, song))
+            pygame.mixer.music.play()
+            pygame.mixer.music.set_volume(self.volume)
+
+    def play_song(self, song):
+        if self.mute:
+            return
+        pygame.mixer.music.load(join(MUSIC, song))
+        pygame.mixer.music.play()
+        pygame.mixer.music.set_volume(self.volume)
+
+    def change_volume(self, numb):
+        self.mute = False
+        self.volume = min(max(self.volume + numb, 0), 1)
+        pygame.mixer.music.set_volume(self.volume)
+
+    def mute_song(self):
+        if self.mute:
+            pygame.mixer.music.set_volume(self.volume)
+        else:
+            pygame.mixer.music.set_volume(0)
+        self.mute = not self.mute
+
+    def stop(self):
+        self.playing = False
+        pygame.mixer.music.pause()
+
+    def stop_play(self):
+        if not self.playing:
+            pygame.mixer.music.unpause()
+        else:
+            pygame.mixer.music.pause()
+        self.playing = not self.playing
+
+    def set_volume_directly(self, numb):
+        self.volume = max(min(numb, 1), 0)
+        pygame.mixer.music.set_volume(self.volume)
+
+
+music_player = MusicPlayer()
 
 
 class Button(pygame.sprite.Sprite):
@@ -139,8 +199,8 @@ class Menu(pygame.sprite.Sprite):
         self.buttons = pygame.sprite.Group()
         self.texts = {
             "Play": Levels,
+            "Create": Create,
             "Settings": list,
-            "Info": list,
             "Exit": exit_game,
         }
         self.font = self.text_surface = self.text_rect = None
@@ -181,6 +241,7 @@ class Menu(pygame.sprite.Sprite):
         if not args:
             self.circles.update()
             self.buttons.update()
+            music_player.check_and_start_next("menu.mp3")
             return
         event = args[0]
         if event.type == pygame.KEYDOWN:
@@ -190,6 +251,233 @@ class Menu(pygame.sprite.Sprite):
             for button in self.buttons:
                 if button.rect.collidepoint(args[0].pos):
                     self.texts[button.text]()
+
+
+class LevelEditor(pygame.sprite.Sprite):
+    def __init__(self, level: str):
+        global all_page_sprites, all_page_resizable
+
+        self.level = level
+        self.group = pygame.sprite.Group()
+        self.resizable = set()
+        super().__init__(self.group)
+        self.image = self.rect = None
+
+        self.background = COLORS["background"]
+        self.color = COLORS["outline"]
+
+        self.w = 500
+        self.h = 500
+        self.board = [[0] * self.w for _ in range(self.h)]
+
+        self.resize()
+        self.resizable.add(self)
+        all_page_sprites = self.group
+        all_page_resizable = self.resizable
+
+    def resize(self):
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        # HERE NEEDED BOARD!!!!!!
+
+    def update(self, *args):
+        if not args:
+            music_player.check_and_start_next("menu.mp3")
+            return
+        event = args[0]
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                Create()
+
+
+class NameInput(pygame.sprite.Sprite):
+    def __init__(self):
+        global all_page_sprites, all_page_resizable
+        self.group = pygame.sprite.Group()
+        self.resizable = set()
+        super().__init__(self.group)
+        self.image = self.rect = None
+
+        self.background = COLORS["background"]
+        self.color = COLORS["outline"]
+        self.font = self.text_surface = self.text_rect = None
+        self.font_static = self.text_surface_static = self.text_rect_static = None
+        self.text = ""
+
+        self.resize()
+        self.resizable.add(self)
+        all_page_sprites = self.group
+        all_page_resizable = self.resizable
+
+    def resize(self):
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        self.font = pygame.font.SysFont('Comic Sans MS', percentage(height, 20))
+        self.text_surface_static = self.font.render("Type level name", False, self.color)
+        self.text_rect_static = self.text_surface_static.get_rect()
+        self.text_rect_static.center = (percentage(width, 50), percentage(height, 19))
+        self.image.blit(self.text_surface_static, self.text_rect_static)
+
+        self.text_surface = self.font.render(self.text, False, self.color)
+        self.text_rect = self.text_surface.get_rect()
+        self.text_rect.center = (percentage(width, 50), percentage(height, 65))
+        self.image.blit(self.text_surface, self.text_rect)
+
+    def update(self, *args):
+        if not args:
+            music_player.check_and_start_next("menu.mp3")
+            return
+        event = args[0]
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                Create()
+            if ((ord("0") <= event.key <= ord("9") or ord("a") <= event.key <= ord("z") or event.key == pygame.K_SPACE)
+                    and len(self.text) < 5):
+                self.text += chr(event.key)
+                self.resize()
+            if event.key == pygame.K_BACKSPACE:
+                self.text = self.text[:-1]
+                self.resize()
+            if event.key == pygame.K_RETURN and self.text != "" and self.text + ".txt" not in listdir(USER_LEVELS):
+                with open(join(USER_LEVELS, self.text + ".txt"), "w", encoding="UTF-8"):
+                    pass
+                LevelEditor(self.text)
+
+
+class EditLevel(pygame.sprite.Sprite):
+    def __init__(self):
+        global all_page_sprites, all_page_resizable
+        self.group = pygame.sprite.Group()
+        self.resizable = set()
+        super().__init__(self.group)
+        self.image = self.rect = None
+
+        self.background = COLORS["background"]
+        self.color = COLORS["outline"]
+        self.font = self.text_surface = self.text_rect = None
+
+        self.buttons = pygame.sprite.Group()
+        self.texts = {
+            "new": list,
+            "edit": list,
+            "delete": list
+        }
+        for text in self.texts.keys():
+            Button(self.buttons, color=self.color, background=self.background, text=text)
+
+        self.resize()
+        self.group.add(self.buttons)
+        self.resizable.add(self)
+        all_page_sprites = self.group
+        all_page_resizable = self.resizable
+
+    def resize(self):
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        self.font = pygame.font.SysFont('Comic Sans MS', percentage(height, 20))
+        self.text_surface = self.font.render("Choose level", False, self.color)
+        self.text_rect = self.text_surface.get_rect()
+        self.text_rect.center = (percentage(width, 50), percentage(height, 19))
+        self.image.blit(self.text_surface, self.text_rect)
+        n = len(self.texts)
+        n_width = 3
+        free_width_side = percentage(width, 10)
+        free_width_between = percentage(width, 4)
+        free_top = percentage(height, 40)
+        free_bottom = percentage(height, 10)
+        free_height_between = percentage(height, 10)
+        button_width = (width - 2 * free_width_side - (n_width - 1) * free_width_between) // n_width
+        button_height = (height - 2 * free_bottom - (n_width - 1) * free_height_between) // n_width
+        buttons = list(self.buttons)
+        for i in range(n // n_width + 1):
+            for j in range(min(3, n - i * n_width)):
+                buttons[i * n_width + j].change_cords(free_width_side + j * button_width + j * free_width_between,
+                                                      free_top + i * button_height + i * free_height_between,
+                                                      button_width,
+                                                      button_height)
+
+    def update(self, *args):
+        if not args:
+            music_player.check_and_start_next("menu.mp3")
+            return
+        event = args[0]
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                for button in self.buttons:
+                    if button.rect.collidepoint(args[0].pos):
+                        print(button.text)
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                Create()
+
+
+class Create(pygame.sprite.Sprite):
+    def __init__(self):
+        global all_page_sprites, all_page_resizable
+        self.group = pygame.sprite.Group()
+        self.resizable = set()
+        super().__init__(self.group)
+        self.image = self.rect = None
+        self.camera = Camera()
+        self.background = COLORS["background"]
+        self.color = COLORS["outline"]
+        self.font = self.text_surface = self.text_rect = None
+        self.buttons = pygame.sprite.Group()
+        self.texts = {
+            "new": NameInput,
+            "edit": EditLevel,
+            "delete": list
+        }
+        for text in self.texts.keys():
+            Button(self.buttons, color=self.color, background=self.background, text=text)
+        self.resize()
+        self.group.add(self.buttons)
+        self.resizable.add(self)
+        all_page_sprites = self.group
+        all_page_resizable = self.resizable
+
+    def resize(self):
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+        self.image.fill(self.background)
+        self.rect = self.image.get_rect()
+        self.font = pygame.font.SysFont('Comic Sans MS', percentage(height, 20))
+        self.text_surface = self.font.render("~Create level~", False, self.color)
+        self.text_rect = self.text_surface.get_rect()
+        self.text_rect.center = (percentage(width, 50), percentage(height, 19))
+        self.image.blit(self.text_surface, self.text_rect)
+        n = len(self.texts)
+        n_width = 3
+        free_width_side = percentage(width, 10)
+        free_width_between = percentage(width, 4)
+        free_top = percentage(height, 40)
+        free_bottom = percentage(height, 10)
+        free_height_between = percentage(height, 10)
+        button_width = (width - 2 * free_width_side - (n_width - 1) * free_width_between) // n_width
+        button_height = (height - 2 * free_bottom - (n_width - 1) * free_height_between) // n_width
+        buttons = list(self.buttons)
+        for i in range(n // n_width + 1):
+            for j in range(min(3, n - i * n_width)):
+                buttons[i * n_width + j].change_cords(free_width_side + j * button_width + j * free_width_between,
+                                                      free_top + i * button_height + i * free_height_between,
+                                                      button_width,
+                                                      button_height)
+
+    def update(self, *args):
+        if not args:
+            return
+        event = args[0]
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                for button in self.buttons:
+                    if button.rect.collidepoint(args[0].pos):
+                        self.texts[button.text]()
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                Menu()
 
 
 class Camera:
@@ -258,6 +546,7 @@ class Levels(pygame.sprite.Sprite):
 
     def update(self, *args):
         if not args:
+            music_player.check_and_start_next("menu.mp3")
             return
         event = args[0]
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -396,6 +685,7 @@ class Game(pygame.sprite.Sprite):
         all_page_sprites = self.group
         all_page_resizable = self.resizable
         self.font = self.text_surface = self.text_rect = None
+        music_player.stop()
 
     def load_level(self):
         size = 30
@@ -433,16 +723,12 @@ class Game(pygame.sprite.Sprite):
     def update(self, *args):
         if not args:
             pressed = pygame.key.get_pressed()
-            if pressed[pygame.K_SPACE]:
+            if pressed[pygame.K_SPACE] or pressed[pygame.K_w] or pressed[pygame.K_UP]:
                 self.player.jump()
-            if pressed[pygame.K_LEFT]:
+            if pressed[pygame.K_LEFT] or pressed[pygame.K_a]:
                 self.player.move(-2, 0)
-            if pressed[pygame.K_RIGHT]:
+            if pressed[pygame.K_RIGHT] or pressed[pygame.K_d]:
                 self.player.move(2, 0)
-            if pressed[pygame.K_LEFT] and pressed[pygame.K_LSHIFT]:
-                self.player.move(-10, 0)
-            if pressed[pygame.K_RIGHT] and pressed[pygame.K_LSHIFT]:
-                self.player.move(10, 0)
             self.camera.update(self.player)
             for elem in self.all_blocks:
                 self.camera.apply(elem)
@@ -477,6 +763,12 @@ while running:
                 full_screen = True
                 for resizable_elem in all_page_resizable:
                     resizable_elem.resize()
+            elif event_glob.key == pygame.K_F1:
+                music_player.mute_song()
+            elif event_glob.key == pygame.K_F2:
+                music_player.change_volume(-0.05)
+            elif event_glob.key == pygame.K_F3:
+                music_player.change_volume(0.05)
         if event_glob.type == pygame.VIDEORESIZE and not full_screen:
             pygame.display.set_mode(event_glob.size, pygame.RESIZABLE)
             width = screen.get_width()
