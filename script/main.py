@@ -254,11 +254,58 @@ class Menu(pygame.sprite.Sprite):
 
 
 class LevelEditor(pygame.sprite.Sprite):
+    class KeyPresser(pygame.sprite.Sprite):
+        def __init__(self, group):
+            super().__init__(group)
+            self.group = group
+            self.color = COLORS["outline"]
+            self.font = pygame.font.SysFont('Comic Sans MS', BLOCK_SIZE[1])
+            self.text_surface = self.text_rect = None
+            self.image = self.rect = None
+
+            self.images = sorted([join(IMAGES, image) for image in listdir(IMAGES)], key=lambda a: "level_edit" not in a)
+            self.image_id = 0
+            self.block = Block(self.group, self.images[self.image_id], 0, 0)
+
+            self.resize()
+
+        def resize(self):
+            self.image = pygame.Surface((width, BLOCK_SIZE[1] * 2), pygame.SRCALPHA, 32)
+            self.rect = self.image.get_rect()
+
+            self.text_surface = self.font.render(split(self.images[self.image_id])[-1], False, (255, 255, 255))
+            self.text_rect = self.text_surface.get_rect()
+
+            # print(*dir(self.text_rect), sep="\n")
+            self.text_rect.midleft = (BLOCK_SIZE[0] + BLOCK_SIZE[0] // 2, BLOCK_SIZE[1] // 2)
+
+            self.image.blit(self.text_surface, self.text_rect)
+            LevelEditor.set_image(self.block, self.images[self.image_id])
+
+        def collide(self, pos: tuple) -> bool:
+            return self.rect.collidepoint(pos)
+
+        def get_image(self) -> str:
+            return self.images[self.image_id]
+
+        def update(self, *args):
+            if not args:
+                return
+            event = args[0]
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    self.image_id = (self.image_id + 1) % len(self.images)
+                    self.resize()
+                if event.key == pygame.K_DOWN:
+                    self.image_id = (self.image_id - 1) % len(self.images)
+                    self.resize()
+
     def __init__(self, level: str):
         global all_page_sprites, all_page_resizable
 
         self.level = level
         self.group = pygame.sprite.Group()
+        self.blocks = pygame.sprite.Group()
         self.resizable = set()
         super().__init__(self.group)
         self.image = self.rect = None
@@ -266,12 +313,20 @@ class LevelEditor(pygame.sprite.Sprite):
         self.background = COLORS["background"]
         self.color = COLORS["outline"]
 
-        self.w = 500
-        self.h = 500
-        self.board = [[0] * self.w for _ in range(self.h)]
+        default_image = join(IMAGES, "level_edit_air.png")
+        self.w = 100
+        self.h = 100
+        self.board = [[Block(self.blocks, default_image, i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]) for j in range(self.w)] for i in range(self.h)]
+        self.stack = []
+        self.start_x = 0
+        self.start_y = 0
+        self.key_presser = self.KeyPresser(self.blocks)
+        self.monitor_mouse = False
+        self.start_monitor_pos = (0, 0)
 
         self.resize()
         self.resizable.add(self)
+        self.group.add(self.blocks)
         all_page_sprites = self.group
         all_page_resizable = self.resizable
 
@@ -279,16 +334,52 @@ class LevelEditor(pygame.sprite.Sprite):
         self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
         self.image.fill(self.background)
         self.rect = self.image.get_rect()
-        # HERE NEEDED BOARD!!!!!!
+        self.key_presser.resize()
 
     def update(self, *args):
         if not args:
+            mouse_pos = pygame.mouse.get_pos()
+            if self.monitor_mouse and mouse_pos != self.start_monitor_pos:
+                self.start_x += mouse_pos[0] - self.start_monitor_pos[0]
+                self.start_y += mouse_pos[1] - self.start_monitor_pos[1]
+                for i in range(self.h):
+                    for j in range(self.w):
+                        self.move_rect(self.board[i][j],
+                                       mouse_pos[0] - self.start_monitor_pos[0],
+                                       mouse_pos[1] - self.start_monitor_pos[1])
+                self.start_monitor_pos = mouse_pos
+            if not pygame.key.get_mods() & pygame.KMOD_LCTRL:
+                self.monitor_mouse = False
             music_player.check_and_start_next("menu.mp3")
             return
         event = args[0]
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 Create()
+            if event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_LCTRL and self.stack:
+                i, j, image = self.stack.pop()
+                self.set_image(self.board[i][j], image)
+            if event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_LCTRL:
+                # ***********************SAVE*******BOARD***************
+                print("ctr+s")
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1 and not pygame.key.get_mods() & pygame.KMOD_LCTRL and not self.key_presser.collide(event.pos):
+                i = (event.pos[0] - self.start_x) // BLOCK_SIZE[0]
+                j = (event.pos[1] - self.start_y) // BLOCK_SIZE[1]
+                if 0 <= i < self.h and 0 <= j < self.w:
+                    self.stack.append((i, j, self.board[i][j].image_path))
+                    self.set_image(self.board[i][j], self.key_presser.get_image())
+            if event.button == 1 and pygame.key.get_mods() & pygame.KMOD_LCTRL:
+                self.monitor_mouse = True
+                self.start_monitor_pos = event.pos
+
+    @staticmethod
+    def move_rect(block, change_x, change_y):
+        block.rect = block.rect.move(change_x, change_y)
+
+    @staticmethod
+    def set_image(block, image):
+        block.image = load_image(join(IMAGES, image))
 
 
 class NameInput(pygame.sprite.Sprite):
@@ -340,9 +431,10 @@ class NameInput(pygame.sprite.Sprite):
             if event.key == pygame.K_BACKSPACE:
                 self.text = self.text[:-1]
                 self.resize()
-            if event.key == pygame.K_RETURN and self.text != "" and self.text + ".txt" not in listdir(USER_LEVELS):
-                with open(join(USER_LEVELS, self.text + ".txt"), "w", encoding="UTF-8"):
-                    pass
+            if event.key == pygame.K_RETURN and self.text != "":
+                if self.text + ".txt" not in listdir(USER_LEVELS):
+                    with open(join(USER_LEVELS, self.text + ".txt"), "w", encoding="UTF-8"):
+                        pass
                 LevelEditor(self.text)
 
 
@@ -552,7 +644,7 @@ class Levels(pygame.sprite.Sprite):
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:
                 for button in self.buttons:
-                    if button.rect.collidepoint(args[0].pos):
+                    if button.rect.collidepoint(event.pos):
                         Game(button.text)
             # SAVED IN REASON OF BEING TO MANY LEVELS
             # if event.button == 4:
@@ -574,6 +666,7 @@ class Block(pygame.sprite.Sprite):
     def __init__(self, group, image, x, y, text=""):
         super().__init__(group)
         self.text = text
+        self.image_path = image
         self.image = load_image(image)
         self.rect = self.image.get_rect().move(x, y)
         self.mask = pygame.mask.from_surface(self.image)
