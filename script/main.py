@@ -27,6 +27,27 @@ COLORS = {
 }
 BLOCK_SIZE = (30, 30)  # размер всех изображение
 
+SOLID_BLOCKS = {
+    "#": join(IMAGES, "solid.png")
+}
+TRANSPARENT_BLOCKS = {
+    ".": join(IMAGES, "water_top.png"),
+    ":": join(IMAGES, "water_solid.png"),
+    "e": join(IMAGES, "end.png"),
+    "*": join(IMAGES, "spikes.png"),
+    ">": join(IMAGES, "point_right.png"),
+    "<": join(IMAGES, "point_left.png"),
+    "^": join(IMAGES, "point_up.png"),
+    "|": join(IMAGES, "point_down.png")
+}
+PLAYERS = {
+    "@": join(IMAGES, "player.png")
+}
+
+REVERSED_SOLID_BLOCKS = {split(value)[-1]: key for key, value in SOLID_BLOCKS.items()}
+REVERSED_TRANSPARENT_BLOCKS = {split(value)[-1]: key for key, value in TRANSPARENT_BLOCKS.items()}
+REVERSED_PLAYERS = {split(value)[-1]: key for key, value in PLAYERS.items()}
+
 # global variables
 all_page_sprites = pygame.sprite.Group()
 all_page_resizable = set()
@@ -200,7 +221,7 @@ class Menu(pygame.sprite.Sprite):
         self.texts = {
             "Play": Levels,
             "Create": Create,
-            "Settings": list,
+            "My levels": list,
             "Exit": exit_game,
         }
         self.font = self.text_surface = self.text_rect = None
@@ -276,7 +297,6 @@ class LevelEditor(pygame.sprite.Sprite):
             self.text_surface = self.font.render(split(self.images[self.image_id])[-1], False, (255, 255, 255))
             self.text_rect = self.text_surface.get_rect()
 
-            # print(*dir(self.text_rect), sep="\n")
             self.text_rect.midleft = (BLOCK_SIZE[0] + BLOCK_SIZE[0] // 2, BLOCK_SIZE[1] // 2)
 
             self.image.blit(self.text_surface, self.text_rect)
@@ -314,9 +334,30 @@ class LevelEditor(pygame.sprite.Sprite):
         self.color = COLORS["outline"]
 
         default_image = join(IMAGES, "level_edit_air.png")
-        self.w = 100
-        self.h = 100
-        self.board = [[Block(self.blocks, default_image, i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]) for j in range(self.w)] for i in range(self.h)]
+        with open(join(USER_LEVELS, self.level) + ".txt", "r", encoding="UTF-8") as f:
+            f = f.readlines()
+            self.h = len(f)
+            self.w = len(f[0]) - 1
+            self.board = [[] for _ in range(self.w)]
+            for j in range(self.h):
+                for i in range(self.w):
+                    print(j, i)
+                    image = f[j][i]
+                    if image == " ":
+                        self.board[i].append(Block(self.blocks, default_image, i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]))
+                    elif image in SOLID_BLOCKS:
+                        self.board[i].append(Block(self.blocks, SOLID_BLOCKS[image], i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]))
+                    elif image in TRANSPARENT_BLOCKS:
+                        self.board[i].append(
+                            Block(self.blocks, TRANSPARENT_BLOCKS[image], i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]))
+                    elif image in PLAYERS:
+                        self.board[i].append(
+                            Block(self.blocks, PLAYERS[image], i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]))
+                    else:
+                        self.board[i].append(Block(self.blocks, default_image, i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]))
+        # self.w = 100
+        # self.h = 100
+        # self.board = [[Block(self.blocks, default_image, i * BLOCK_SIZE[0], j * BLOCK_SIZE[1]) for j in range(self.w)] for i in range(self.h)]
         self.stack = []
         self.start_x = 0
         self.start_y = 0
@@ -350,6 +391,12 @@ class LevelEditor(pygame.sprite.Sprite):
                 self.start_monitor_pos = mouse_pos
             if not pygame.key.get_mods() & pygame.KMOD_LCTRL:
                 self.monitor_mouse = False
+            if pygame.key.get_mods() & pygame.KMOD_LSHIFT:
+                i = (mouse_pos[0] - self.start_x) // BLOCK_SIZE[0]
+                j = (mouse_pos[1] - self.start_y) // BLOCK_SIZE[1]
+                if 0 <= i < self.h and 0 <= j < self.w and self.board[i][j].image_path != self.key_presser.get_image():
+                    self.stack.append((i, j, self.board[i][j].image_path))
+                    self.set_image(self.board[i][j], self.key_presser.get_image())
             music_player.check_and_start_next("menu.mp3")
             return
         event = args[0]
@@ -360,13 +407,27 @@ class LevelEditor(pygame.sprite.Sprite):
                 i, j, image = self.stack.pop()
                 self.set_image(self.board[i][j], image)
             if event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_LCTRL:
-                # ***********************SAVE*******BOARD***************
-                print("ctr+s")
+                with open(join(USER_LEVELS, self.level) + ".txt", "w", encoding="UTF-8") as f:
+                    for j in range(self.w):
+                        for i in range(self.h):
+                            image = split(self.board[i][j].image_path)[-1]
+                            if image == "level_edit_air.png":
+                                f.write(" ")
+                            elif image in REVERSED_SOLID_BLOCKS:
+                                f.write(REVERSED_SOLID_BLOCKS[image])
+                            elif image in REVERSED_TRANSPARENT_BLOCKS:
+                                f.write(REVERSED_TRANSPARENT_BLOCKS[image])
+                            elif image in REVERSED_PLAYERS:
+                                f.write(REVERSED_PLAYERS[image])
+                            else:
+                                raise FileNotFoundError(f"Image {image} not in IMAGES directory")
+                        if j + 1 < self.w:
+                            f.write("\n")
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1 and not pygame.key.get_mods() & pygame.KMOD_LCTRL and not self.key_presser.collide(event.pos):
+            if event.button == 1 and not pygame.key.get_mods() & pygame.KMOD_LCTRL:
                 i = (event.pos[0] - self.start_x) // BLOCK_SIZE[0]
                 j = (event.pos[1] - self.start_y) // BLOCK_SIZE[1]
-                if 0 <= i < self.h and 0 <= j < self.w:
+                if 0 <= i < self.h and 0 <= j < self.w and self.board[i][j].image_path != self.key_presser.get_image():
                     self.stack.append((i, j, self.board[i][j].image_path))
                     self.set_image(self.board[i][j], self.key_presser.get_image())
             if event.button == 1 and pygame.key.get_mods() & pygame.KMOD_LCTRL:
@@ -380,6 +441,7 @@ class LevelEditor(pygame.sprite.Sprite):
     @staticmethod
     def set_image(block, image):
         block.image = load_image(join(IMAGES, image))
+        block.image_path = image
 
 
 class NameInput(pygame.sprite.Sprite):
@@ -433,8 +495,10 @@ class NameInput(pygame.sprite.Sprite):
                 self.resize()
             if event.key == pygame.K_RETURN and self.text != "":
                 if self.text + ".txt" not in listdir(USER_LEVELS):
-                    with open(join(USER_LEVELS, self.text + ".txt"), "w", encoding="UTF-8"):
-                        pass
+                    with open(join(USER_LEVELS, self.text + ".txt"), "w", encoding="UTF-8") as f:
+                        for i in range(99):
+                            f.write(" " * 100 + "\n")
+                        f.write(" " * 100)
                 LevelEditor(self.text)
 
 
@@ -737,23 +801,6 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game(pygame.sprite.Sprite):
-    SOLID_BLOCKS = {
-        "#": join(IMAGES, "solid.png")
-    }
-    TRANSPARENT_BLOCKS = {
-        ".": join(IMAGES, "water_top.png"),
-        ":": join(IMAGES, "water_solid.png"),
-        "e": join(IMAGES, "end.png"),
-        "*": join(IMAGES, "spikes.png"),
-        ">": join(IMAGES, "point_right.png"),
-        "<": join(IMAGES, "point_left.png"),
-        "^": join(IMAGES, "point_up.png"),
-        "|": join(IMAGES, "point_down.png")
-    }
-    PLAYERS = {
-        "@": join(IMAGES, "player.png")
-    }
-
     def __init__(self, level):
         global all_page_sprites, all_page_resizable
         self.level = level
@@ -786,12 +833,12 @@ class Game(pygame.sprite.Sprite):
             level_data = list(map(str.strip, level.readlines()))
         for i, line in enumerate(level_data):
             for j, elem in enumerate(line):
-                if elem in self.SOLID_BLOCKS:
-                    Block(self.solid_blocks, self.SOLID_BLOCKS[elem], j * size, i * size, elem)
-                if elem in self.TRANSPARENT_BLOCKS:
-                    Block(self.transparent_blocks, self.TRANSPARENT_BLOCKS[elem], j * size, i * size, elem)
-                if elem in self.PLAYERS:
-                    Player(self.players_group, self.solid_blocks, self.transparent_blocks, self.PLAYERS[elem],
+                if elem in SOLID_BLOCKS:
+                    Block(self.solid_blocks, SOLID_BLOCKS[elem], j * size, i * size, elem)
+                if elem in TRANSPARENT_BLOCKS:
+                    Block(self.transparent_blocks, TRANSPARENT_BLOCKS[elem], j * size, i * size, elem)
+                if elem in PLAYERS:
+                    Player(self.players_group, self.solid_blocks, self.transparent_blocks, PLAYERS[elem],
                            j * size, i * size, self.restart, self.resize)
         self.player = list(self.players_group)[0]
 
