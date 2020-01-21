@@ -162,6 +162,13 @@ class Button(pygame.sprite.Sprite):
         self.image.blit(self.text_surface, self.text_rect)
         self.rect = self.image.get_rect().move(x, y)
 
+    def set_text(self, text: str):
+        self.text = text
+        self.change_cords(self.rect.x, self.rect.y, *self.size)
+
+    def hide(self):
+        self.kill()
+
     def update(self, *args):
         mouse_pos = pygame.mouse.get_pos()
         if self.rect.collidepoint(mouse_pos) and self.add < self.limit:
@@ -221,7 +228,7 @@ class Menu(pygame.sprite.Sprite):
         self.texts = {
             "Play": Levels,
             "Create": NameInput,
-            "My levels": list,
+            "My levels": UserLevels,
             "Exit": exit_game,
         }
         self.font = self.text_surface = self.text_rect = None
@@ -399,7 +406,7 @@ class LevelEditor(pygame.sprite.Sprite):
         event = args[0]
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-               Menu()
+                Menu()
             if event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_LCTRL and self.stack:
                 i, j, image = self.stack.pop()
                 self.set_image(self.board[i][j], image)
@@ -513,8 +520,8 @@ class Camera:
         self.dy = -(target.rect.y + target.rect.h // 2 - height // 2)
 
 
-class Levels(pygame.sprite.Sprite):
-    def __init__(self):
+class ChoseLevels(pygame.sprite.Sprite):
+    def __init__(self, directory: str, menu_text: str, escape_page):
         global all_page_sprites, all_page_resizable
         self.group = pygame.sprite.Group()
         self.resizable = set()
@@ -525,7 +532,12 @@ class Levels(pygame.sprite.Sprite):
         self.color = COLORS["outline"]
         self.font = self.text_surface = self.text_rect = None
         self.buttons = pygame.sprite.Group()
-        for text in sorted(listdir(LEVELS)):
+        self.directory = directory
+        self.menu_text = menu_text
+        self.escape_page = escape_page
+        self.sorted_levels = sorted(listdir(self.directory))
+        self.page = 0
+        for text in self.sorted_levels[self.page * 6:self.page * 6 + 6]:
             Button(self.buttons, color=self.color, background=self.background, text=text[:-4])
         self.resize()
         self.group.add(self.buttons)
@@ -538,11 +550,11 @@ class Levels(pygame.sprite.Sprite):
         self.image.fill(self.background)
         self.rect = self.image.get_rect()
         self.font = pygame.font.SysFont('Comic Sans MS', percentage(height, 20))
-        self.text_surface = self.font.render("~Levels~", False, self.color)
+        self.text_surface = self.font.render(self.menu_text, False, self.color)
         self.text_rect = self.text_surface.get_rect()
         self.text_rect.center = (percentage(width, 50), percentage(height, 19))
         self.image.blit(self.text_surface, self.text_rect)
-        n = len(listdir(LEVELS))
+        n = len(self.sorted_levels[self.page * 6: self.page * 6 + 6])
         n_width = 3
         free_width_side = percentage(width, 10)
         free_width_between = percentage(width, 4)
@@ -560,6 +572,15 @@ class Levels(pygame.sprite.Sprite):
                                                       button_height)
         self.camera.update(self)
 
+    def next_page(self):
+        for button in self.buttons:
+            button.kill()
+        self.buttons = pygame.sprite.Group()
+        for text in self.sorted_levels[self.page * 6:self.page * 6 + 6]:
+            Button(self.buttons, color=self.color, background=self.background, text=text[:-4])
+        self.group.add(self.buttons)
+        self.resize()
+
     def update(self, *args):
         if not args:
             music_player.check_and_start_next("menu.mp3")
@@ -569,10 +590,26 @@ class Levels(pygame.sprite.Sprite):
             if event.button == 1:
                 for button in self.buttons:
                     if button.rect.collidepoint(event.pos):
-                        Game(button.text)
+                        Game(button.text, self.directory, self.escape_page)
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 Menu()
+            if event.key == pygame.K_RIGHT:
+                self.page = min(len(self.sorted_levels) // 6, self.page + 1)
+                self.next_page()
+            if event.key == pygame.K_LEFT:
+                self.page = max(0, self.page - 1)
+                self.next_page()
+
+
+class Levels(ChoseLevels):
+    def __init__(self):
+        super().__init__(LEVELS, "~Levels~", Levels)
+
+
+class UserLevels(ChoseLevels):
+    def __init__(self):
+        super().__init__(USER_LEVELS, "~Your games~", UserLevels)
 
 
 class Block(pygame.sprite.Sprite):
@@ -650,9 +687,11 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game(pygame.sprite.Sprite):
-    def __init__(self, level):
+    def __init__(self, level, level_path, escape_page):
         global all_page_sprites, all_page_resizable
+        self.escape_page = escape_page
         self.level = level
+        self.level_path = level_path
         self.group = pygame.sprite.Group()
         self.resizable = set()
         self.background = COLORS["background"]
@@ -680,7 +719,7 @@ class Game(pygame.sprite.Sprite):
 
     def load_level(self) -> bool:
         have_player = False
-        with open(join(LEVELS, self.level + ".txt"), "r", encoding="UTF-8") as level:
+        with open(join(self.level_path, self.level + ".txt"), "r", encoding="UTF-8") as level:
             level_data = level.readlines()
         for i, line in enumerate(level_data):
             for j, elem in enumerate(line[:-1] if i + 1 < len(level_data) else line):
@@ -698,7 +737,7 @@ class Game(pygame.sprite.Sprite):
         return True
 
     def restart(self):
-        self.__init__(self.level)
+        self.__init__(self.level, self.level_path, self.escape_page)
 
     def resize(self):
         self.image = pygame.Surface((width, height), pygame.SRCALPHA, 32)
@@ -732,7 +771,7 @@ class Game(pygame.sprite.Sprite):
         event = args[0]
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                Levels()
+                self.escape_page()
             if event.key == pygame.K_r:
                 self.restart()
 
